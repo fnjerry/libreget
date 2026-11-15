@@ -1,0 +1,119 @@
+name: Mirror all release assets
+on:
+  workflow_dispatch:
+    inputs:
+      max_assets:
+        description: 'Max assets to copy this run (0 = all; idempotent, safe to re-run)'
+        required: false
+        default: '0'
+concurrency:
+  group: libreget-asset-mirror
+  cancel-in-progress: false
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    permissions:
+      contents: write
+    steps:
+      - name: Mirror missing release assets from upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPSTREAM: OpenSelena/libreget
+          FORK: fnjerry/libreget
+          MIN_BYTES: 0
+          MAX_ASSETS: ${{ inputs.max_assets || '0' }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, urllib.request, urllib.parse
+          API = 'https://api.github.com'
+          UP = os.environ['UPSTREAM']
+          FORK = os.environ['FORK']
+          TOK = os.environ['GH_TOKEN']
+          H = {'Accept': 'application/vnd.github+json',
+               'User-Agent': 'libreget-asset-mirror',
+               'Authorization': 'Bearer ' + TOK}
+          MINB = int(os.environ.get('MIN_BYTES', '0'))
+
+          def call(url, method='GET'):
+              req = urllib.request.Request(url, headers=H, method=method)
+              with urllib.request.urlopen(req, timeout=60) as r:
+                  body = r.read()
+              return json.loads(body) if body else {}
+
+          def paged(path):
+              out, page = [], 1
+              while True:
+                  sep = '&' if '?' in path else '?'
+                  chunk = call(API + path + sep + 'per_page=100&page=%d' % page)
+                  out += chunk
+                  if len(chunk) < 100:
+                      break
+                  page += 1
+              return out
+
+          upstream = paged('/repos/%s/releases' % UP)
+          fork = paged('/repos/%s/releases' % FORK)
+          by_tag = {r['tag_name']: r for r in fork}
+          print('UPSTREAM_RELEASES', len(upstream), 'FORK_RELEASES', len(fork), flush=True)
+          cap = int(os.environ.get('MAX_ASSETS') or 0)
+          done = 0
+          for r in upstream:
+              if cap and done >= cap:
+                  print('CAP_REACHED', done, flush=True)
+                  break
+              tag = r['tag_name']
+              f = by_tag.get(tag)
+              if not f:
+                  print('NO_FORK_RELEASE', tag, flush=True)
+                  continue
+              # Remove half-uploaded placeholders left by interrupted runs.
+              for a in f.get('assets', []):
+                  if a.get('state', 'uploaded') != 'uploaded':
+                      try:
+                          call(API + '/repos/%s/releases/assets/%s' % (FORK, a['id']), 'DELETE')
+                          print('CLEARED_STARTER', tag, a['name'], flush=True)
+                      except Exception as e:
+                          print('CLEAR_FAILED', a['name'], e, flush=True)
+              have = {a['name'] for a in f.get('assets', [])
+                      if a.get('state', 'uploaded') == 'uploaded'}
+              for a in r.get('assets', []):
+                  if cap and done >= cap:
+                      break
+                  if a['name'] in have or a['size'] < MINB:
+                      continue
+                  print('MIRROR', tag, a['name'], a['size'], flush=True)
+                  req = urllib.request.Request(
+                      a['browser_download_url'],
+                      headers={'User-Agent': 'libreget-asset-mirror'})
+                  fn = '/tmp/asset.bin'
+                  with urllib.request.urlopen(req, timeout=600) as src, open(fn, 'wb') as dst:
+                      while True:
+                          buf = src.read(1 << 20)
+                          if not buf:
+                              break
+                          dst.write(buf)
+                  got = os.path.getsize(fn)
+                  if got != a['size']:
+                      print('SIZE_MISMATCH', got, a['size'], flush=True)
+                      os.remove(fn)
+                      continue
+                  url = ('https://uploads.github.com/repos/%s/releases/%s/assets?name=%s'
+                         % (FORK, f['id'], urllib.parse.quote(a['name'])))
+                  p = subprocess.run(
+                      ['curl', '-sS', '-f', '-X', 'POST',
+                       '-H', 'Authorization: Bearer ' + TOK,
+                       '-H', 'Content-Type: ' + (a.get('content_type') or 'application/octet-stream'),
+                       '--data-binary', '@' + fn, '-w', '\n__HTTP__%{http_code}',
+                       '--max-time', '600', url],
+                      capture_output=True, text=True, timeout=700)
+                  tail = (p.stdout or '')[-200:] + (p.stderr or '')[-200:]
+                  print('UPLOAD_RC', p.returncode, 'TAIL', tail.replace('\n', ' '), flush=True)
+                  if p.returncode == 0 and '__HTTP__201' in (p.stdout or ''):
+                      have.add(a['name'])
+                      done += 1
+                  else:
+                      print('UPLOAD_NOT_CONFIRMED', tag, a['name'], flush=True)
+                  os.remove(fn)
+          print('DONE mirrored=%d' % done, flush=True)
+          PY
