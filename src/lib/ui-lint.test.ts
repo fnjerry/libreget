@@ -6,7 +6,6 @@ import { validatePolicy } from "lintapple";
 describe("UI Lint Policies & Target Runner", () => {
   const rootDir = path.resolve(__dirname, "../..");
   const appPolicyPath = path.join(rootDir, "ui-policy.app.json");
-  const docsPolicyPath = path.join(rootDir, "ui-policy.docs.json");
 
   it("validates ui-policy.app.json against lintapple and LibreGet desktop tokens", () => {
     const raw = JSON.parse(fs.readFileSync(appPolicyPath, "utf-8"));
@@ -21,41 +20,7 @@ describe("UI Lint Policies & Target Runner", () => {
     expect(validated.colorSchemes).toEqual(["dark", "light"]);
   });
 
-  it("validates ui-policy.docs.json against lintapple and includes anti-slop banned copy", () => {
-    const raw = JSON.parse(fs.readFileSync(docsPolicyPath, "utf-8"));
-    const validated = validatePolicy(raw);
-
-    expect(validated.viewports).toEqual([
-      { width: 1280, height: 800 },
-      { width: 375, height: 812 },
-    ]);
-    expect(validated.colorSchemes).toEqual(["dark", "light"]);
-    expect(validated.bannedCopy).toEqual(
-      expect.arrayContaining([
-        "seamlessly",
-        "seamless",
-        "comprehensive",
-        "empowering",
-        "half the battle",
-        "revolutionize",
-        "delve",
-        "testament",
-        "elevate",
-        "comprehensive suite",
-        "robust powerhouse",
-        "powerhouse",
-        "supercharge",
-        "cutting-edge",
-        "game-changer",
-        "unleash",
-        "tapestry",
-        "multifaceted",
-        "unparalleled",
-      ])
-    );
-  });
-
-  it("resolves single Svelte routes, doc paths, --shell, and --all-themes", async () => {
+  it("resolves single Svelte routes, --shell, and --all-themes", async () => {
     const { resolveTargets, ALL_APP_THEMES, SHELL_ROUTES, buildTauriMockInitScript } = await import(
       "../../scripts/lint-ui.mjs"
     );
@@ -69,11 +34,6 @@ describe("UI Lint Policies & Target Runner", () => {
     expect(shellPlan.targets).toEqual(SHELL_ROUTES);
     expect(SHELL_ROUTES).toContain("/nami");
 
-    const docShort = resolveTargets(["docs/mcp"]);
-    expect(docShort.surface).toBe("docs");
-    expect(docShort.targets).toEqual(["docs/mcp/index.html"]);
-    expect(docShort.themes).toEqual(["dark", "light"]);
-
     const allThemes = resolveTargets(["/settings", "--all-themes"]);
     expect(allThemes.surface).toBe("app");
     expect(allThemes.targets).toEqual(["/settings"]);
@@ -84,7 +44,7 @@ describe("UI Lint Policies & Target Runner", () => {
     expect(mockScript).toContain("plugin:courses|courses_list_platforms");
   });
 
-  it("enforces strict zero-findings on docs, baseline diffing on app routes, and per-theme max normalization", async () => {
+  it("enforces baseline diffing on app routes and per-theme max normalization", async () => {
     const { tallyFindings, compareTargetBaseline } = await import("../../scripts/lint-ui.mjs");
 
     const sampleFindings = [
@@ -128,14 +88,6 @@ describe("UI Lint Policies & Target Runner", () => {
     });
     expect(appRegress.passed).toBe(false);
     expect(appRegress.worse).toEqual([{ rule: "control-size", was: 1, now: 2 }]);
-
-    // Docs surface: strict zero-findings even if a baseline object was passed
-    const docsFail = compareTargetBaseline("docs", counts, {
-      "control-size": 5,
-      "icon-button-tooltip": 5,
-    });
-    expect(docsFail.passed).toBe(false);
-    expect(docsFail.worse.length).toBe(2);
   });
 
   it("registers lint:ui and lint:ui:update in package.json and ships scripts/ui-lint-baseline.json", () => {
@@ -159,7 +111,6 @@ describe("UI Lint Policies & Target Runner", () => {
     const skillMd = fs.readFileSync(skillPath, "utf-8");
     expect(skillMd).toContain("name: ui-lint");
     expect(skillMd).toContain("ui-policy.app.json");
-    expect(skillMd).toContain("ui-policy.docs.json");
   });
 });
 

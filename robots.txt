@@ -1,4 +1,0 @@
-User-agent: *
-Allow: /
-
-Sitemap: https://libreget.asf.sale/sitemap.xml

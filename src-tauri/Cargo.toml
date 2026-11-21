@@ -13,7 +13,7 @@ resolver = "2"
 
 [package]
 name = "libreget"
-version = "0.16.6"
+version = "0.16.10"
 description = "LibreGet — Universal Downloader & Media Player"
 authors = ["OpenSelena"]
 edition = "2021"

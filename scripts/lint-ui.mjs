@@ -5,15 +5,11 @@
  *
  * Audits rendered UI against explicit design policies:
  *   - ui-policy.app.json  : Svelte 5 desktop routes (1100x720 & 800x560, 28px controls, baseline diffing)
- *   - ui-policy.docs.json : Landing page & docs suite (1280x800 & 375x812, strict zero-findings)
  *
  * Usage:
  *   pnpm lint:ui /settings                # Lint a single Svelte route (dark + light)
  *   pnpm lint:ui /courses                 # Lint an embedded plugin route
- *   pnpm lint:ui docs/mcp/index.html      # Lint a single documentation page
- *   pnpm lint:ui index.html               # Lint the root landing page
  *   pnpm lint:ui --shell                  # Lint all core desktop routes
- *   pnpm lint:ui --docs                   # Lint landing page + all 7 doc pages
  *   pnpm lint:ui /settings --all-themes   # Lint across all 14 themes in src/app.css
  *   pnpm lint:ui:update [target]          # Record/refresh baseline in scripts/ui-lint-baseline.json
  */
@@ -29,7 +25,6 @@ import { checkPage, validatePolicy } from "lintapple";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const ROOT_DIR = path.resolve(__dirname, "..");
 export const APP_POLICY_PATH = path.join(ROOT_DIR, "ui-policy.app.json");
-export const DOCS_POLICY_PATH = path.join(ROOT_DIR, "ui-policy.docs.json");
 export const BASELINE_PATH = path.join(ROOT_DIR, "scripts", "ui-lint-baseline.json");
 
 export const ALL_APP_THEMES = [
@@ -74,41 +69,13 @@ export const PLUGIN_ROUTES = [
   "/study",
 ];
 
-export const CANONICAL_DOCS = [
-  "index.html",
-  "docs/index.html",
-  "docs/installation/index.html",
-  "docs/mcp/index.html",
-  "docs/courses/index.html",
-  "docs/nami/index.html",
-  "docs/troubleshooting/index.html",
-  "docs/changelog/index.html",
-];
-
-function normalizeDocTarget(raw) {
-  const cleaned = raw.replace(/\\/g, "/").replace(/^\.\//, "");
-  if (cleaned.endsWith(".html")) return cleaned;
-  return `${cleaned.replace(/\/$/, "")}/index.html`;
-}
-
 export function resolveTargets(argv = []) {
   const mode = argv.includes("--update") ? "update" : "check";
   const json = argv.includes("--json");
   const allThemes = argv.includes("--all-themes");
   const isShell = argv.includes("--shell");
-  const isDocs = argv.includes("--docs");
 
   const positional = argv.filter((a) => !a.startsWith("--"));
-
-  if (isDocs) {
-    return {
-      surface: "docs",
-      targets: CANONICAL_DOCS,
-      themes: ["dark", "light"],
-      mode,
-      json,
-    };
-  }
 
   if (isShell) {
     return {
@@ -125,23 +92,6 @@ export function resolveTargets(argv = []) {
       surface: "app",
       targets: allThemes ? ["/", "/settings"] : ["/"],
       themes: allThemes ? ALL_APP_THEMES : ["dark", "light"],
-      mode,
-      json,
-    };
-  }
-
-  const primaryTarget = positional[0].replace(/\\/g, "/");
-  const isDocTarget =
-    primaryTarget === "index.html" ||
-    primaryTarget.startsWith("docs/") ||
-    primaryTarget === "docs" ||
-    primaryTarget.endsWith(".html");
-
-  if (isDocTarget) {
-    return {
-      surface: "docs",
-      targets: positional.map(normalizeDocTarget),
-      themes: ["dark", "light"],
       mode,
       json,
     };
@@ -503,78 +453,6 @@ async function ensureViteServer(port = 1420) {
   throw new Error(`Timed out waiting for Vite dev server on port ${port}.\nLogs:\n${logs}`);
 }
 
-const MIME_TYPES = {
-  ".html": "text/html; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".js": "application/javascript; charset=utf-8",
-  ".mjs": "application/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".svg": "image/svg+xml",
-  ".ico": "image/x-icon",
-  ".woff2": "font/woff2",
-};
-
-async function detectExistingDocsServer(candidatePorts = [8080, 4173, 3000, 5500]) {
-  if (process.env.UI_LINT_DOCS_URL) {
-    return process.env.UI_LINT_DOCS_URL.replace(/\/$/, "");
-  }
-  for (const port of candidatePorts) {
-    const openUrl = await isPortOpen(port);
-    if (!openUrl) continue;
-    try {
-      const res = await fetch(`${openUrl}/index.html`, { signal: AbortSignal.timeout(1000) });
-      if (res.ok) {
-        const text = await res.text();
-        if (text.includes("LibreGet") && text.includes("docs/")) {
-          return openUrl;
-        }
-      }
-    } catch {
-      // Ignore non-docs server on candidate port
-    }
-  }
-  return null;
-}
-
-async function ensureStaticDocsServer() {
-  const existingUrl = await detectExistingDocsServer();
-  if (existingUrl) {
-    return { url: existingUrl, close: async () => {} };
-  }
-
-  const server = http.createServer((req, res) => {
-    const urlPath = decodeURIComponent((req.url || "/").split("?")[0]);
-    let relPath = urlPath.replace(/^\/+/, "");
-    if (!relPath || relPath.endsWith("/")) {
-      relPath = `${relPath}index.html`;
-    }
-    const absPath = path.resolve(ROOT_DIR, relPath);
-    if (!absPath.startsWith(ROOT_DIR) || !fs.existsSync(absPath) || fs.statSync(absPath).isDirectory()) {
-      res.writeHead(404);
-      res.end("Not found");
-      return;
-    }
-    const ext = path.extname(absPath).toLowerCase();
-    res.writeHead(200, { "Content-Type": MIME_TYPES[ext] || "application/octet-stream" });
-    fs.createReadStream(absPath).pipe(res);
-  });
-
-  return new Promise((resolve, reject) => {
-    server.on("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      const port = typeof address === "object" && address ? address.port : 0;
-      resolve({
-        url: `http://127.0.0.1:${port}`,
-        close: () => new Promise((r) => server.close(() => r())),
-      });
-    });
-  });
-}
-
 async function launchChromiumBrowser() {
   for (const opts of [{}, { channel: "chrome" }, { channel: "msedge" }]) {
     try {
@@ -605,31 +483,18 @@ async function auditTarget(browser, baseUrl, surface, target, themes, policy) {
       });
 
       try {
-        if (surface === "app") {
-          await context.addInitScript(buildTauriMockInitScript(theme));
-        } else {
-          await context.addInitScript((t) => {
-            try {
-              localStorage.setItem("libreget_docs_theme", t);
-              localStorage.setItem("theme", t);
-            } catch {}
-          }, theme);
-        }
+        await context.addInitScript(buildTauriMockInitScript(theme));
 
         const page = await context.newPage();
         page.setDefaultTimeout(60000);
-        const url =
-          surface === "app"
-            ? `${baseUrl}${target}`
-            : `${baseUrl}/${target.replace(/^\/+/, "")}`;
+        const url = `${baseUrl}${target}`;
 
         await page.goto(url, { waitUntil: "load", timeout: 60000 });
-        if (surface === "app") {
-          await page
-            .locator("#main-content, .stream-popout")
-            .first()
-            .waitFor({ state: "visible", timeout: 60000 });
-        }
+        await page
+          .locator("#main-content, .stream-popout")
+          .first()
+          .waitFor({ state: "visible", timeout: 60000 });
+
         await page.evaluate(
           ({ t, isDark }) => {
             document.documentElement.setAttribute("data-theme", t);
@@ -659,17 +524,13 @@ async function auditTarget(browser, baseUrl, surface, target, themes, policy) {
 
 async function main() {
   const plan = resolveTargets(process.argv.slice(2));
-  const policyPath = plan.surface === "app" ? APP_POLICY_PATH : DOCS_POLICY_PATH;
-  const policy = validatePolicy(JSON.parse(fs.readFileSync(policyPath, "utf-8")));
+  const policy = validatePolicy(JSON.parse(fs.readFileSync(APP_POLICY_PATH, "utf-8")));
 
   const existingBaseline = fs.existsSync(BASELINE_PATH)
     ? JSON.parse(fs.readFileSync(BASELINE_PATH, "utf-8"))
     : { targets: {} };
 
-  const server =
-    plan.surface === "app"
-      ? await ensureViteServer(1420)
-      : await ensureStaticDocsServer();
+  const server = await ensureViteServer(1420);
 
   const browser = await launchChromiumBrowser();
   const targetFindings = {};

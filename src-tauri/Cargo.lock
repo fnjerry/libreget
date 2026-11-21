@@ -3897,7 +3897,7 @@ dependencies = [
 
 [[package]]
 name = "libreget"
-version = "0.16.6"
+version = "0.16.10"
 dependencies = [
  "aes 0.8.4",
  "anyhow",

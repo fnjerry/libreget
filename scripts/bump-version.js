@@ -152,35 +152,6 @@ if (fs.existsSync(aboutProjectPath)) {
   );
 }
 
-// Update landing page (index.html)
-function updateLandingPageContent(content) {
-  return content
-    .replace(/"softwareVersion":\s*"[^"]+"/, `"softwareVersion": "${version}"`)
-    // Asset download links are pinned to the release tag: rewrite the tag and
-    // every version number inside the asset name in a single pass.
-    .replace(/releases\/tag\/v\d+\.\d+\.\d+\/download\/[^\s"'<>\\]+/g, (m) =>
-      m.replace(/v\d+\.\d+\.\d+(?=\/download)/, `v${version}`).replace(/\d+\.\d+\.\d+/g, version)
-    )
-    .replace(/LibreGet v\d+\.\d+\.\d+\. Free and open source/g, `LibreGet v${version}. Free and open source`)
-    .replace(/releases\/tag\/v\d+\.\d+\.\d+/g, `releases/tag/v${version}`)
-    .replace(/Get LibreGet v\d+\.\d+\.\d+/g, `Get LibreGet v${version}`);
-}
-
-const indexPath = path.join(root, "index.html");
-if (fs.existsSync(indexPath)) {
-  writeText(indexPath, updateLandingPageContent);
-}
-
-// Update docs sidebar version pills
-const docsDirs = ["docs", "docs/changelog", "docs/courses", "docs/installation", "docs/mcp", "docs/nami", "docs/troubleshooting"];
-for (const d of docsDirs) {
-  const docFile = path.join(root, d, "index.html");
-  if (fs.existsSync(docFile)) {
-    writeText(docFile, (content) => {
-      return content.replace(/<aside class="docs-sidebar">[\s\S]*?<\/aside>/g, (sidebar) => sidebar.replace(/<span class="sidebar-tag">v\d+\.\d+\.\d+<\/span>/g, `<span class="sidebar-tag">v${version}</span>`));
-    });
-  }
-}
 
 // Update security policy supported versions
 const [maj, min] = version.split(".");
